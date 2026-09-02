@@ -46,8 +46,10 @@ export default function Login() {
         setError(detail.map((item) => item.msg || JSON.stringify(item)).join(', '));
       } else if (typeof detail === 'string') {
         setError(detail);
+      } else if (err.message && (err.message.includes('Network Error') || !err.response)) {
+        setError('Cannot reach authentication server. If backend was asleep, please retry in 10-15 seconds.');
       } else {
-        setError('Authentication failed. Check credentials.');
+        setError(err.response?.data?.message || err.message || 'Authentication failed. Check credentials.');
       }
     } finally {
       setSubmitting(false);
@@ -135,7 +137,7 @@ export default function Login() {
                 required
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
-                placeholder="sandeep or alice"
+                placeholder="Enter your email or username"
                 className="h-9 text-xs rounded-lg"
               />
             </div>

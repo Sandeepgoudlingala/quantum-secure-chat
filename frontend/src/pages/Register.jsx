@@ -46,8 +46,10 @@ export default function Register() {
         setError(detail.map((item) => item.msg || JSON.stringify(item)).join(', '));
       } else if (typeof detail === 'string') {
         setError(detail);
+      } else if (err.message && (err.message.includes('Network Error') || !err.response)) {
+        setError('Cannot connect to backend server. If Render backend was asleep, please retry in 10-15 seconds.');
       } else {
-        setError('Registration failed. Username or email may already exist.');
+        setError(err.response?.data?.message || err.message || 'Registration failed. Please try again.');
       }
     } finally {
       setSubmitting(false);
@@ -137,7 +139,7 @@ export default function Register() {
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="bob or charlie"
+                placeholder="Choose a username"
                 className="h-9 text-xs rounded-lg"
               />
             </div>
@@ -152,7 +154,7 @@ export default function Register() {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="user@example.com"
+                placeholder="Enter your email"
                 className="h-9 text-xs rounded-lg"
               />
             </div>
