@@ -12,11 +12,10 @@ import {
   Sun,
   Moon,
   ArrowRight,
-  Sparkles,
-  Check,
   Cpu,
   Fingerprint
 } from 'lucide-react';
+
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { LatticeBackground } from '../components/ui/LatticeBackground';
@@ -27,7 +26,6 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [demoFilled, setDemoFilled] = useState(false);
 
   const { login } = useAuth();
   const { isDark, toggleTheme } = useTheme();
@@ -35,6 +33,8 @@ export default function Login() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!identifier.trim() || !password) return;
+
     setError('');
     setSubmitting(true);
     try {
@@ -52,13 +52,6 @@ export default function Login() {
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const handleDemoFill = () => {
-    setIdentifier('sandeep');
-    setPassword('password123');
-    setDemoFilled(true);
-    setTimeout(() => setDemoFilled(false), 2000);
   };
 
   return (
@@ -171,29 +164,17 @@ export default function Login() {
               />
             </div>
 
-            {/* Mobbin UX: Quick Demo Fill Shortcut */}
-            <div className="pt-0.5 flex items-center justify-between text-xs">
-              <span className="text-zinc-500 text-[11px] font-mono">Evaluation mode:</span>
-              <button
-                type="button"
-                onClick={handleDemoFill}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-100 hover:bg-zinc-200/80 dark:bg-zinc-900 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 text-[11px] font-mono border border-zinc-200 dark:border-zinc-800 transition-colors"
-              >
-                {demoFilled ? <Check className="w-3 h-3 text-emerald-500" /> : <Sparkles className="w-3 h-3 text-cyan-600 dark:text-cyan-400" />}
-                <span>{demoFilled ? 'Filled!' : 'Fill Demo (sandeep)'}</span>
-              </button>
-            </div>
-
             <Button
               type="submit"
               variant="default"
               size="md"
               isLoading={submitting}
               icon={ArrowRight}
-              className="w-full text-xs font-semibold h-9 mt-2"
+              className="w-full text-xs font-semibold h-9 mt-4"
             >
               {submitting ? 'Authenticating...' : 'Sign In'}
             </Button>
+
           </form>
 
           <div className="text-center pt-4 border-t border-zinc-200/80 dark:border-zinc-800 mt-5">
