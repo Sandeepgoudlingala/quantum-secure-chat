@@ -1,10 +1,21 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+const isCloudHost = typeof window !== 'undefined' && (
+  window.location.hostname.includes('vercel.app') || 
+  (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1')
+);
+
+
+const defaultBaseUrl = isCloudHost 
+  ? 'https://quantum-secure-chat-6fvo.onrender.com/api/v1' 
+  : '/api/v1';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || defaultBaseUrl;
 
 const api = axios.create({
   baseURL: API_BASE_URL,
 });
+
 
 
 // Attach Authorization Access Token Interceptor & Handle FormData Headers

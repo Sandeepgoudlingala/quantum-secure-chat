@@ -35,8 +35,12 @@ export const SocketProvider = ({ children }) => {
     if (!token) return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = import.meta.env.VITE_WS_URL || `${protocol}//${window.location.host}`;
+    const defaultWsHost = (window.location.hostname.includes('vercel.app') || window.location.hostname !== 'localhost')
+      ? 'wss://quantum-secure-chat-6fvo.onrender.com'
+      : `${protocol}//${window.location.host}`;
+    const wsHost = import.meta.env.VITE_WS_URL || defaultWsHost;
     const wsUrl = `${wsHost}/ws/chat?token=${token}`;
+
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
