@@ -25,6 +25,7 @@ class AuthService:
         """Registers a new user after verifying unique constraints and hashing password."""
         clean_username = user_in.username.strip()
         clean_email = user_in.email.strip().lower()
+        clean_password = user_in.password.strip()
 
         # Check existing username
         if db.query(User).filter(func.lower(User.username) == clean_username.lower()).first():
@@ -35,7 +36,7 @@ class AuthService:
             raise BadRequestException(detail="Email address is already registered")
 
         # Hash password using bcrypt
-        hashed_pwd = hash_password(user_in.password)
+        hashed_pwd = hash_password(clean_password)
 
         new_user = User(
             username=clean_username,
@@ -71,7 +72,8 @@ class AuthService:
         u_agent = request.headers.get("user-agent") if request else "unknown"
 
         identifier = (login_data.email_or_username or "").strip()
-        password = login_data.password or ""
+        raw_password = login_data.password or ""
+        clean_password = raw_password.strip()
 
         # Search user by email or username (case-insensitive & trimmed)
         user = db.query(User).filter(
@@ -83,9 +85,10 @@ class AuthService:
 
         pwd_valid = False
         if user:
-            pwd_valid = verify_password(password, user.hashed_password)
-            if not pwd_valid and password.strip() != password:
-                pwd_valid = verify_password(password.strip(), user.hashed_password)
+            pwd_valid = verify_password(clean_password, user.hashed_password)
+            if not pwd_valid and raw_password != clean_password:
+                pwd_valid = verify_password(raw_password, user.hashed_password)
+
 
         if not user or not pwd_valid:
             # Record failed login audit log

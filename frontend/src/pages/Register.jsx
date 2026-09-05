@@ -37,10 +37,14 @@ export default function Register() {
     setError('');
     setSubmitting(true);
     try {
-      await register(username, email, password);
-      await login(username, password);
+      const cleanUsername = username.trim();
+      const cleanEmail = email.trim();
+      const cleanPassword = password.trim();
+      await register(cleanUsername, cleanEmail, cleanPassword);
+      await login(cleanUsername, cleanPassword);
       navigate('/dashboard');
     } catch (err) {
+
       const detail = err.response?.data?.detail;
       if (Array.isArray(detail)) {
         setError(detail.map((item) => item.msg || JSON.stringify(item)).join(', '));

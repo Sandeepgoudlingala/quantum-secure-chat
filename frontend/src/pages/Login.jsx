@@ -38,9 +38,10 @@ export default function Login() {
     setError('');
     setSubmitting(true);
     try {
-      await login(identifier, password);
+      await login(identifier.trim(), password.trim());
       navigate('/dashboard');
     } catch (err) {
+
       const detail = err.response?.data?.detail;
       if (Array.isArray(detail)) {
         setError(detail.map((item) => item.msg || JSON.stringify(item)).join(', '));
