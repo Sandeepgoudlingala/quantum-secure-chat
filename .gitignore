@@ -34,6 +34,10 @@ uploads/*
 !uploads/.gitkeep
 backend/uploads/*
 !backend/uploads/.gitkeep
+tests/uploads/*
+!tests/uploads/.gitkeep
+tests/uploads/
+
 
 # Environment & Secrets
 .env
