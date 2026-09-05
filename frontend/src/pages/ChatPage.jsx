@@ -43,6 +43,7 @@ export default function ChatPage() {
     saveInboundKey,
     saveOutboundKey,
     saveSessionKey,
+    clearPeerKeys,
     keys
   } = useCrypto();
 
@@ -59,6 +60,7 @@ export default function ChatPage() {
     messages: wsMessages,
     clearPeerMessages,
     markKeyAccepted,
+    resetAcceptedPeer,
   } = useSocket();
 
   const [searchParams] = useSearchParams();
@@ -140,6 +142,16 @@ export default function ChatPage() {
     if (!activeRecipient || !wsMessages) return;
     const peerMsgs = wsMessages[activeRecipient.id];
     if (Array.isArray(peerMsgs) && peerMsgs.length > 0) {
+      const sessionEndMsg = peerMsgs.find((m) => m.is_session_end);
+      if (sessionEndMsg) {
+        clearPeerKeys(activeRecipient.id);
+        if (resetAcceptedPeer) resetAcceptedPeer(activeRecipient.id);
+        setCustomInboundKey('');
+        setChatHistory([sessionEndMsg]);
+        setDecryptedMap({});
+        return;
+      }
+
       peerMsgs.forEach((msg) => {
         setChatHistory((prev) => {
           if (prev.some((m) => m.id === msg.id)) return prev;
@@ -260,33 +272,34 @@ export default function ChatPage() {
    * Accept an incoming Session Key Offer from a peer.
    */
   const handleAcceptKeyOffer = (offer, andShareBack = false) => {
-    if (!offer) return;
+    if (!offer || !offer.session_key) return;
+
     saveInboundKey(offer.sender_id, offer.session_key);
     saveSessionKey(offer.sender_id, offer.session_key);
+    if (markKeyAccepted) markKeyAccepted(offer.sender_id);
 
     if (activeRecipient?.id === offer.sender_id) {
       setCustomInboundKey(offer.session_key);
     }
 
-    // Mark this peer as accepted — no more key offer banners for them
-    markKeyAccepted(offer.sender_id);
+    setSharedKeyOffer(null);
+    setNotification(`🔑 Session key accepted from ${offer.username}!`);
+    setTimeout(() => setNotification(''), 4000);
 
-    // Re-decrypt messages with the accepted key
+    // Re-decrypt messages with newly accepted key
     chatHistory.forEach((msg) => decryptMessage(msg, offer.session_key));
 
-    if (andShareBack) {
+    if (andShareBack && sendWSMessage) {
       let myKey = myOutboundKey || generateOutboundKey(offer.sender_id);
-      if (sendWSMessage && myKey) {
+      if (myKey) {
         sendWSMessage('SHARE_SESSION_KEY', {
           recipient_id: offer.sender_id,
           session_key: myKey,
         });
+        setNotification(`📤 Session key accepted & shared back with ${offer.username}!`);
+        setTimeout(() => setNotification(''), 4000);
       }
     }
-
-    setSharedKeyOffer(null);
-    setNotification(`✅ Key accepted from ${offer.username || 'peer'}! Messages decrypted.`);
-    setTimeout(() => setNotification(''), 4000);
   };
 
   /**
@@ -294,7 +307,11 @@ export default function ChatPage() {
    */
   const handleFulfillKeyRequest = (req) => {
     if (!req) return;
-    let myKey = myOutboundKey || generateOutboundKey(req.sender_id);
+    let myKey = myOutboundKey;
+    if (!myKey) {
+      myKey = generateOutboundKey(req.sender_id);
+    }
+
     if (sendWSMessage && myKey) {
       sendWSMessage('SHARE_SESSION_KEY', {
         recipient_id: req.sender_id,
@@ -380,7 +397,10 @@ export default function ChatPage() {
       setInputText('');
 
       if (sendWSMessage) {
-        sendWSMessage('SEND_MESSAGE', messagePayload);
+        sendWSMessage('SEND_MESSAGE', {
+          id: savedMsg.id,
+          ...messagePayload,
+        });
       }
     } catch (err) {
       console.error('Message send failure:', err);
@@ -392,7 +412,7 @@ export default function ChatPage() {
   const handleEndConversation = async () => {
     if (!activeRecipient) return;
     const confirm = window.confirm(
-      `End secure session with ${activeRecipient.username}? This will purge conversation logs on both ends.`
+      `End secure session with ${activeRecipient.username}? This will purge conversation logs and session keys on both ends.`
     );
     if (!confirm) return;
 
@@ -405,11 +425,16 @@ export default function ChatPage() {
         });
       }
 
+      // Purge cryptographic keys for this peer locally
+      clearPeerKeys(activeRecipient.id);
+      if (resetAcceptedPeer) resetAcceptedPeer(activeRecipient.id);
+      setCustomInboundKey('');
+
       const systemNotice = {
         id: `sys_${Date.now()}`,
         sender_id: 'SYSTEM',
         receiver_id: activeRecipient.id,
-        plaintext: 'Conversation session ended. Messages cleared on both sides for forward secrecy.',
+        plaintext: 'Conversation session ended. Messages and session keys cleared on both sides for forward secrecy.',
         created_at: new Date().toISOString(),
         is_system: true,
         is_session_end: true,
@@ -420,6 +445,8 @@ export default function ChatPage() {
       if (clearPeerMessages) {
         clearPeerMessages(activeRecipient.id);
       }
+      setNotification(`🔒 Session with ${activeRecipient.username} ended. Keys purged.`);
+      setTimeout(() => setNotification(''), 4000);
     } catch (err) {
       alert(`Failed to end session: ${err.message}`);
     }
@@ -901,16 +928,35 @@ export default function ChatPage() {
                             : 'bg-white/30 dark:bg-white/[0.05] border border-white/40 dark:border-white/10 text-zinc-900 dark:text-white rounded-bl-xs shadow-xs'
                         }`}
                       >
-                        {/* Awaiting Key State */}
+                        {/* Awaiting Key State / Session Ended Ciphertext */}
                         {isAwaitingKey && !isMe ? (
                           <div className="space-y-2 font-mono text-xs">
-                            <div className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-semibold">
-                              <LockIcon className="w-3.5 h-3.5 shrink-0" />
-                              <span>🔒 Locked: Awaiting {activeRecipient.username}'s session key</span>
+                            <div className="flex items-center justify-between gap-1.5 text-amber-600 dark:text-amber-400 font-semibold">
+                              <span className="flex items-center gap-1.5">
+                                <LockIcon className="w-3.5 h-3.5 shrink-0" />
+                                <span>🔒 Ciphertext (Session Locked)</span>
+                              </span>
+                              <Badge variant="outline" className="text-[9px] bg-amber-500/10 border-amber-400/30 text-amber-600 dark:text-amber-300">
+                                AES-256-GCM
+                              </Badge>
                             </div>
-                            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                              {activeRecipient.username} must share their session key to decrypt this message.
+
+                            {/* Prominent Ciphertext Box */}
+                            <div className="p-2.5 rounded-xl bg-black/25 dark:bg-black/50 text-amber-200/90 font-mono text-[11px] break-all border border-amber-500/20 space-y-1">
+                              <p className="text-[9px] text-zinc-400 uppercase font-bold tracking-wider">Encrypted Ciphertext:</p>
+                              <p className="text-zinc-300 dark:text-zinc-200 font-mono text-[10px] leading-relaxed select-all">
+                                {msg.encrypted_content}
+                              </p>
+                              <div className="flex items-center gap-3 pt-1 text-[9px] text-zinc-500 border-t border-white/10">
+                                <span>IV: {msg.iv}</span>
+                                <span>Tag: {msg.auth_tag}</span>
+                              </div>
+                            </div>
+
+                            <p className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                              Session was ended. The sender must share their new session key for you to decrypt this message.
                             </p>
+
                             <div className="flex items-center gap-2 pt-1">
                               <button
                                 onClick={handleRequestPeerKey}
@@ -928,10 +974,24 @@ export default function ChatPage() {
                           </div>
                         ) : isKeyMismatch && !isMe ? (
                           <div className="space-y-2 font-mono text-xs">
-                            <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 font-semibold">
-                              <LockIcon className="w-3.5 h-3.5 shrink-0" />
-                              <span>⚠️ Key Mismatch / Decryption Failed</span>
+                            <div className="flex items-center justify-between gap-1.5 text-rose-600 dark:text-rose-400 font-semibold">
+                              <span className="flex items-center gap-1.5">
+                                <LockIcon className="w-3.5 h-3.5 shrink-0" />
+                                <span>🔒 Ciphertext (Key Mismatch / Session Ended)</span>
+                              </span>
+                              <Badge variant="outline" className="text-[9px] bg-rose-500/10 border-rose-400/30 text-rose-600 dark:text-rose-300">
+                                LOCKED
+                              </Badge>
                             </div>
+
+                            {/* Prominent Ciphertext Box */}
+                            <div className="p-2.5 rounded-xl bg-black/25 dark:bg-black/50 text-rose-200/90 font-mono text-[11px] break-all border border-rose-500/20 space-y-1">
+                              <p className="text-[9px] text-zinc-400 uppercase font-bold tracking-wider">Encrypted Ciphertext:</p>
+                              <p className="text-zinc-300 dark:text-zinc-200 font-mono text-[10px] leading-relaxed select-all">
+                                {msg.encrypted_content}
+                              </p>
+                            </div>
+
                             <div className="flex items-center gap-2 pt-1">
                               <button
                                 onClick={handleShareMyKey}

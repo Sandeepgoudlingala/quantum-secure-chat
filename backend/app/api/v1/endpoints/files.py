@@ -3,8 +3,8 @@ Secure File Sharing REST API Endpoints.
 Provides endpoints for uploading encrypted files, retrieving file metadata, and downloading verified decrypted files.
 """
 
-from typing import List
-from fastapi import APIRouter, Depends, UploadFile, File as FastAPIFile, Form, Request, status
+from typing import List, Optional
+from fastapi import APIRouter, Depends, UploadFile, File as FastAPIFile, Form, Request, HTTPException, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -53,17 +53,44 @@ def list_files(
 
 
 @router.post("/{file_id}/download")
-def download_decrypted_file(
+@router.post("/download/{file_id}")
+async def download_decrypted_file(
     file_id: str,
     request: Request,
-    session_key: str = Form(..., description="Base64 AES-256 Session Key"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Retrieves ciphertext from disk, decrypts using session key, validates SHA-256 hash digest,
-    and returns original file binary stream.
+    and returns original file binary stream. Supports JSON body, Form data, and query parameters.
     """
+    session_key = None
+    content_type = request.headers.get("content-type", "")
+
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            session_key = body.get("session_key") or body.get("key")
+        except Exception:
+            pass
+    elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+        try:
+            form = await request.form()
+            session_key = form.get("session_key") or form.get("key")
+        except Exception:
+            pass
+
+    if not session_key:
+        query_key = request.query_params.get("session_key")
+        if query_key:
+            session_key = query_key
+
+    if not session_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Session key is required for file decryption"
+        )
+
     ip_addr = request.client.host if request.client else "unknown"
     file_bytes, file_meta = FileService.retrieve_and_decrypt_file(
         db=db,

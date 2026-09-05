@@ -4,12 +4,13 @@ Supports real-time encrypted messaging, online user presence, typing indicators,
 """
 
 import json
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query, status
 from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.core.security import decode_token
 from app.models.user import User
+from app.models.message import Message
 from app.services.chat_service import ChatService
 from app.core.app_logging import logger
 
@@ -52,7 +53,7 @@ class ConnectionManager:
             return True
         return False
 
-    async def broadcast(self, data: dict, exclude_user_id: str = None):
+    async def broadcast(self, data: dict, exclude_user_id: Optional[str] = None):
         """Broadcasts a JSON message to all connected clients."""
         for user_id, sockets in list(self.active_connections.items()):
             if exclude_user_id and user_id == exclude_user_id:
@@ -88,7 +89,7 @@ async def websocket_chat_endpoint(
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
-        if payload.get("type") != "access":
+        if not payload or payload.get("type") != "access":
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
@@ -114,9 +115,15 @@ async def websocket_chat_endpoint(
         # Main Event Receiver Loop
         while True:
             raw_data = await websocket.receive_text()
-            data = json.loads(raw_data)
+            try:
+                data = json.loads(raw_data)
+            except Exception as json_err:
+                logger.warning(f"Malformed JSON from user {user_id}: {json_err}")
+                continue
+
             event_type = data.get("event_type")
-            payload_data = data.get("payload", {})
+            raw_payload = data.get("payload")
+            payload_data = raw_payload if isinstance(raw_payload, dict) else {}
 
             if event_type == "SEND_MESSAGE":
                 # Handle Encrypted Message Delivery
@@ -124,15 +131,30 @@ async def websocket_chat_endpoint(
                 encrypted_content = payload_data.get("encrypted_content")
                 iv = payload_data.get("iv")
                 auth_tag = payload_data.get("auth_tag")
+                msg_id = payload_data.get("id")
 
-                # Save message to database
-                msg = ChatService.save_encrypted_message(
-                    db=db,
-                    sender_id=user_id,
-                    receiver_id=receiver_id,
-                    encrypted_content=encrypted_content,
-                    iv=iv,
-                    auth_tag=auth_tag
+                if not receiver_id or not encrypted_content:
+                    continue
+
+                msg = None
+                if msg_id:
+                    msg = db.query(Message).filter(Message.id == msg_id).first()
+
+                if not msg:
+                    # Save message to database if not already saved via REST
+                    msg = ChatService.save_encrypted_message(
+                        db=db,
+                        sender_id=user_id,
+                        receiver_id=receiver_id,
+                        encrypted_content=encrypted_content,
+                        iv=iv or "",
+                        auth_tag=auth_tag or ""
+                    )
+
+                created_at_str = (
+                    msg.created_at.isoformat()
+                    if hasattr(msg.created_at, "isoformat")
+                    else str(msg.created_at)
                 )
 
                 msg_payload = {
@@ -145,14 +167,17 @@ async def websocket_chat_endpoint(
                         "iv": iv,
                         "auth_tag": auth_tag,
                         "status": msg.status,
-                        "created_at": msg.created_at.isoformat()
+                        "created_at": created_at_str
                     }
                 }
 
                 # Dispatch message to recipient if online
                 delivered = await manager.send_personal_json(receiver_id, msg_payload)
                 if delivered:
-                    ChatService.update_message_status(db, msg.id, "DELIVERED")
+                    try:
+                        ChatService.update_message_status(db, msg.id, "DELIVERED")
+                    except Exception:
+                        pass
 
                 # Send confirmation receipt to sender
                 await manager.send_personal_json(user_id, {
@@ -162,59 +187,74 @@ async def websocket_chat_endpoint(
 
             elif event_type in ["TYPING_START", "TYPING_STOP"]:
                 recipient_id = payload_data.get("recipient_id")
-                await manager.send_personal_json(recipient_id, {
-                    "event_type": event_type,
-                    "payload": {"sender_id": user_id}
-                })
+                if recipient_id:
+                    await manager.send_personal_json(recipient_id, {
+                        "event_type": event_type,
+                        "payload": {"sender_id": user_id}
+                    })
 
             elif event_type == "READ_RECEIPT":
                 message_id = payload_data.get("message_id")
                 sender_id = payload_data.get("sender_id")
-                ChatService.update_message_status(db, message_id, "READ")
-                await manager.send_personal_json(sender_id, {
-                    "event_type": "READ_RECEIPT",
-                    "payload": {"message_id": message_id, "status": "READ"}
-                })
+                if message_id and sender_id:
+                    try:
+                        ChatService.update_message_status(db, message_id, "READ")
+                    except Exception as e:
+                        logger.warning(f"Could not update read receipt for {message_id}: {e}")
+                    await manager.send_personal_json(sender_id, {
+                        "event_type": "READ_RECEIPT",
+                        "payload": {"message_id": message_id, "status": "READ"}
+                    })
 
             elif event_type in ["PQC_HANDSHAKE_SIGNAL", "PQC_SESSION_ROTATE", "PQC_SESSION_END"]:
                 recipient_id = payload_data.get("recipient_id")
-                if event_type in ["PQC_SESSION_ROTATE", "PQC_SESSION_END"] and recipient_id:
-                    # Delete conversation from BOTH sides (both directions of sender/receiver)
-                    ChatService.delete_conversation_history(db, user_id, recipient_id)
-                    ChatService.delete_conversation_history(db, recipient_id, user_id)
-                await manager.send_personal_json(recipient_id, {
-                    "event_type": event_type,
-                    "payload": {
-                        "sender_id": user_id,
-                        "kem_ciphertext": payload_data.get("kem_ciphertext")
-                    }
-                })
+                if recipient_id:
+                    if event_type in ["PQC_SESSION_ROTATE", "PQC_SESSION_END"]:
+                        # Delete conversation from BOTH sides (both directions of sender/receiver)
+                        try:
+                            ChatService.delete_conversation_history(db, user_id, recipient_id)
+                            ChatService.delete_conversation_history(db, recipient_id, user_id)
+                        except Exception as e:
+                            logger.error(f"Error deleting conversation history: {e}")
+
+                    await manager.send_personal_json(recipient_id, {
+                        "event_type": event_type,
+                        "payload": {
+                            "sender_id": user_id,
+                            "kem_ciphertext": payload_data.get("kem_ciphertext")
+                        }
+                    })
 
             elif event_type in ["SHARE_SESSION_KEY", "REQUEST_SESSION_KEY"]:
                 recipient_id = payload_data.get("recipient_id")
-                await manager.send_personal_json(recipient_id, {
-                    "event_type": event_type,
-                    "payload": {
-                        "sender_id": user_id,
-                        "username": user.username,
-                        "session_key": payload_data.get("session_key")
-                    }
-                })
-
+                if recipient_id:
+                    await manager.send_personal_json(recipient_id, {
+                        "event_type": event_type,
+                        "payload": {
+                            "sender_id": user_id,
+                            "username": user.username if user else "User",
+                            "session_key": payload_data.get("session_key")
+                        }
+                    })
 
     except WebSocketDisconnect:
         if user_id:
             manager.disconnect(user_id, websocket)
-            # Update user online status
-            user = db.query(User).filter(User.id == user_id).first()
-            if user:
-                user.is_online = False
-                db.commit()
+            # Update user online status if no active connections left
+            if user_id not in manager.active_connections:
+                try:
+                    u = db.query(User).filter(User.id == user_id).first()
+                    if u:
+                        u.is_online = False
+                        db.commit()
 
-            await manager.broadcast({
-                "event_type": "USER_PRESENCE",
-                "payload": {"user_id": user_id, "is_online": False}
-            })
+                    await manager.broadcast({
+                        "event_type": "USER_PRESENCE",
+                        "payload": {"user_id": user_id, "username": user.username if user else "User", "is_online": False}
+                    })
+                except Exception as e:
+                    logger.error(f"Error handling user presence on disconnect: {e}")
+
     except Exception as e:
         logger.error(f"WebSocket Exception encountered: {str(e)}")
         if user_id:

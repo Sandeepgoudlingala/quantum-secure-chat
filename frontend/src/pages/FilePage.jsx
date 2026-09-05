@@ -131,7 +131,17 @@ export default function FilePage() {
 
       setDownloadModalFile(null);
     } catch (err) {
-      alert(`Decryption/Download failed: ${err.response?.data?.detail || err.message}`);
+      let errMsg = err.message;
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          const parsed = JSON.parse(text);
+          errMsg = parsed.detail || errMsg;
+        } catch (e) {}
+      } else if (err.response?.data?.detail) {
+        errMsg = err.response.data.detail;
+      }
+      alert(`Decryption/Download failed: ${errMsg}`);
     } finally {
       setDownloadingId(null);
     }

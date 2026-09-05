@@ -174,6 +174,28 @@ export const CryptoProvider = ({ children }) => {
     }
   };
 
+  const clearPeerKeys = (peerId) => {
+    if (!peerId) return;
+    setSessionKeys((prev) => {
+      const updated = { ...prev };
+      delete updated[peerId];
+      if (user) localStorage.setItem(`session_keys_${user.id}`, JSON.stringify(updated));
+      return updated;
+    });
+    setInboundKeys((prev) => {
+      const updated = { ...prev };
+      delete updated[peerId];
+      if (user) localStorage.setItem(`inbound_keys_${user.id}`, JSON.stringify(updated));
+      return updated;
+    });
+    setOutboundKeys((prev) => {
+      const updated = { ...prev };
+      delete updated[peerId];
+      if (user) localStorage.setItem(`outbound_keys_${user.id}`, JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   return (
     <CryptoContext.Provider
       value={{
@@ -189,6 +211,7 @@ export const CryptoProvider = ({ children }) => {
         saveSessionKey,
         saveInboundKey,
         saveOutboundKey,
+        clearPeerKeys,
         setSessionKey: (recipientId, key) =>
           setSessionKeys((prev) => ({ ...prev, [recipientId]: key })),
       }}
@@ -212,5 +235,6 @@ export const useCrypto = () =>
     saveSessionKey: () => {},
     saveInboundKey: () => {},
     saveOutboundKey: () => {},
+    clearPeerKeys: () => {},
     setSessionKey: () => {},
   };

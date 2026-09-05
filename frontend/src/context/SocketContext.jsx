@@ -19,7 +19,11 @@ export const SocketProvider = ({ children }) => {
   const acceptedKeyPeers = useRef(new Set());
   // Expose a way for ChatPage to mark a peer's key as accepted
   const markKeyAccepted = (peerId) => {
-    acceptedKeyPeers.current.add(peerId);
+    if (peerId) acceptedKeyPeers.current.add(peerId);
+  };
+  // Expose a way to reset accepted peer when session ends
+  const resetAcceptedPeer = (peerId) => {
+    if (peerId) acceptedKeyPeers.current.delete(peerId);
   };
 
   useEffect(() => {
@@ -97,6 +101,7 @@ export const SocketProvider = ({ children }) => {
           setKeyRequest(payload);
         } else if (event_type === 'PQC_SESSION_END' || event_type === 'PQC_SESSION_ROTATE') {
           const senderId = payload.sender_id;
+          resetAcceptedPeer(senderId);
           setMessages((prev) => ({
             ...prev,
             [senderId]: [
@@ -105,7 +110,7 @@ export const SocketProvider = ({ children }) => {
                 sender_id: senderId,
                 is_system: true,
                 is_session_end: true,
-                plaintext: '🛡️ Session ended by peer. Conversation cleared on both sides for forward secrecy.',
+                plaintext: '🛡️ Session ended by peer. Conversation and session keys cleared on both sides for forward secrecy.',
                 created_at: new Date().toISOString(),
               },
             ],
@@ -159,6 +164,7 @@ export const SocketProvider = ({ children }) => {
         setMessages,
         clearPeerMessages,
         markKeyAccepted,
+        resetAcceptedPeer,
       }}
     >
       {children}
@@ -181,5 +187,6 @@ export const useSocket = () =>
     setMessages: () => {},
     clearPeerMessages: () => {},
     markKeyAccepted: () => {},
+    resetAcceptedPeer: () => {},
   };
 
